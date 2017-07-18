@@ -115,6 +115,15 @@ export default class EventDefDateMutation {
       start.add(this.startDelta)
     }
 
+    let slots = calendar.opt('slots')
+    let snapOnSlots = calendar.opt('snapOnSlots')
+    if (!eventDateProfile.isAllDay() && !this.forceAllDay && slots && snapOnSlots) {
+      let dateRange = calendar.snapEventInSlotBoundary(start, end, slots)
+      // snap event boundary to slot boundary
+      start = dateRange.start
+      end = dateRange.end
+    }
+
     if (shouldRezone) {
       start = calendar.applyTimezone(start)
 

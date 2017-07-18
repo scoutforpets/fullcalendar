@@ -1098,7 +1098,45 @@ export default class Calendar {
     if (allDay) {
       end.stripTime().add(this.defaultAllDayEventDuration)
     } else {
-      end.add(this.defaultTimedEventDuration)
+      let slots = this.opt('slots')
+      let snapOnSlots = this.opt('snapOnSlots')
+
+      if (slots && snapOnSlots) {
+        let slot
+        let startTime
+        let foundStartTime = false
+
+        for (let i = 0; i < slots.length; i++) {
+          slot = slots[i]
+
+          // can't use zonedStart.clone().time(slot.start) here
+          let duration = moment.duration(slot.start)
+          startTime = zonedStart.clone().set({
+            'hour': duration.get('hour'),
+            'minute': duration.get('minute'),
+            'second': duration.get('second')
+          })
+
+          if (startTime.isSame(zonedStart)) {
+            foundStartTime = true
+
+            // can't use end.time(slot.end) here
+            let duration = moment.duration(slot.end)
+            end.set({
+              'hour': duration.get('hour'),
+              'minute': duration.get('minute'),
+              'second': duration.get('second')
+            })
+            break
+          }
+        }
+
+        if (!foundStartTime) {
+          end.add(this.defaultTimedEventDuration)
+        }
+      } else {
+        end.add(this.defaultTimedEventDuration)
+      }
     }
 
     if (this.getIsAmbigTimezone()) {
@@ -1106,6 +1144,58 @@ export default class Calendar {
     }
 
     return end
+  }
+
+  // Snaps the event in the slot boundary
+  snapEventInSlotBoundary(startDate, endDate, slots) {
+    // look for the slot containing date
+    let startFound = false
+    let endFound = endDate == null
+
+    for (let i = 0; i < slots.length; i++) {
+      let slot = slots[i]
+      let startTime = startDate.clone().time(slot.start)
+      let endTime = startDate.clone().time(slot.end)
+
+      if (!startFound && startDate.isBefore(endTime)) {
+        // found matching slot for start of event
+        startFound = true
+        startDate = startTime
+      }
+
+      if (!endFound) {
+        startTime = endDate.clone().time(slot.start)
+        endTime = endDate.clone().time(slot.end)
+        if (endDate.isBefore(startTime) || endDate.isSame(startTime)) {
+          // end of event is before the current slot
+          endFound = true
+          endDate.time(slots[Math.max(0, i - 1)].end)
+        }
+        if (endDate.isBetween(startTime, endTime) || endDate.isSame(endTime)) {
+          // found matching slot for end of event
+          endFound = true
+          endDate = endTime
+        }
+      }
+
+      if (startFound && endFound) {
+        break
+      }
+    }
+
+    // not found because date is too late
+    let lastSlot = slots[slots.length - 1]
+    if (!startFound) {
+      startDate.time(lastSlot.start)
+    }
+    if (!endFound) {
+      endDate.time(lastSlot.end)
+    }
+
+    return {
+      start: startDate,
+      end: endDate
+    }
   }
 
 

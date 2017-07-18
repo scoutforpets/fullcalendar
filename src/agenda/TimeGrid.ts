@@ -44,13 +44,17 @@ export default class TimeGrid extends InteractiveDateComponent {
   slotDuration: any // duration of a "slot", a distinct time segment on given day, visualized by lines
   snapDuration: any // granularity of time for dragging and selecting
   snapsPerSlot: any
+  slots: any // an array of custom slots, replacing the automatic slots every 'slotDuration'
+  showSlotEndTime: any // display the end time of each custom slot
+  showMinorSlotTime: any // display the time of 'minor' slots
+  snapOnSlots: any // snap to whole slots when using custom slots
   labelFormat: any // formatting string for times running along vertical axis
   labelInterval: any // duration of how often a label should be displayed for a slot
 
   headContainerEl: any // div that hold's the date header
   colEls: any // cells elements in the day-row background
   slatContainerEl: any // div that wraps all the slat rows
-  slatEls: any // elements running horizontally across all columns
+  slatEls: any // elements running horizontally across all columns, minus breaks in case slots are used
   nowIndicatorEls: any
 
   colCoordCache: any
@@ -151,6 +155,59 @@ export default class TimeGrid extends InteractiveDateComponent {
     this.labelFormat = input ||
       this.opt('smallTimeFormat') // the computed default
 
+    let slots = this.opt('slots')
+    if (slots && Array.isArray(slots)) {
+      // filter valid slots
+      slots = $.grep(slots, function(sl) {
+        return sl.hasOwnProperty('start') && sl.hasOwnProperty('end') &&
+          typeof(sl.start) === 'string' && typeof(sl.end) === 'string' &&
+          sl.start.match(/^[0-9]{1,2}:[0-9]{1,2}(:[0-9]{1,2})?$/) &&
+          sl.end.match(/^[0-9]{1,2}:[0-9]{1,2}(:[0-9]{1,2})?$/) &&
+          true
+      })
+      if (slots.length >= 2) { // require at least 2 slots to display properly
+        // sort slots by start time
+        slots.sort(function(sl1, sl2) {
+          let start1 = moment(sl1.start, 'HH:mm:ss')
+          let start2 = moment(sl2.start, 'HH:mm:ss')
+          if (start1.isBefore(start2)) {
+            return -1
+          } else if (start2.isBefore(start1)) {
+            return 1
+          } else {
+            return 0
+          }
+        })
+
+        // make sure each slot ends after it starts, and before the next one starts
+        for (let i = 0; i < slots.length; i++) {
+          let start1 = moment(slots[i].start, 'HH:mm:ss')
+          let end1 = moment(slots[i].end, 'HH:mm:ss')
+          if (end1.isBefore(start1)) {
+            slots[i].end = slots[i].start
+          }
+          if (i + 1 < slots.length) {
+            let start2 = moment(slots[i + 1].start, 'HH:mm:ss')
+            if (start2.isBefore(end1)) {
+              slots[i].end = slots[i + 1].start
+            }
+          }
+        }
+        this.slots = slots
+
+        // options related to slots
+        let showSlotEndTime = this.opt('showSlotEndTime')
+        if (showSlotEndTime !== false) { // defaults to true
+          this.showSlotEndTime = true
+        }
+        let showMinorSlotTime = this.opt('showMinorSlotTime')
+        if (showMinorSlotTime !== false) { // defaults to true
+          this.showMinorSlotTime = true
+        }
+        this.snapOnSlots = this.opt('snapOnSlots')
+      }
+    }
+
     input = this.opt('slotLabelInterval')
     this.labelInterval = input ?
       moment.duration(input) :
@@ -200,7 +257,7 @@ export default class TimeGrid extends InteractiveDateComponent {
 
     this.el.html(
       '<div class="fc-bg"></div>' +
-      '<div class="fc-slats"></div>' +
+      '<div class="fc-slats' + (this.slots ? ' fc-timeslots' : '') + '"></div>' +
       '<hr class="fc-divider ' + theme.getClass('widgetHeader') + '" style="display:none" />'
     )
 
@@ -218,7 +275,7 @@ export default class TimeGrid extends InteractiveDateComponent {
         '</table>'
       )
 
-    this.slatEls = this.slatContainerEl.find('tr')
+    this.slatEls = this.slatContainerEl.find('tr').not('.fc-timeslots-break')
 
     this.slatCoordCache = new CoordCache({
       els: this.slatEls,
@@ -241,32 +298,103 @@ export default class TimeGrid extends InteractiveDateComponent {
     let isLabeled
     let axisHtml
 
-    // Calculate the time for each slot
-    while (slotTime < dateProfile.maxTime) {
-      slotDate = calendar.msToUtcMoment(dateProfile.renderUnzonedRange.startMs).time(slotTime)
-      isLabeled = isInt(divideDurationByDuration(slotIterator, this.labelInterval))
+    let slots = this.slots
+    if (slots) {
+      let slot
+      let nextSlot
+      let startTime
+      let endTime
+      let nextStartTime
+      let breakHtml
+      let breakHeight
+      let slotHeight
+      let start = calendar.msToUtcMoment(dateProfile.renderUnzonedRange.startMs)
 
-      axisHtml =
-        '<td class="fc-axis fc-time ' + theme.getClass('widgetContent') + '" ' + view.axisStyleAttr() + '>' +
+      for (let i = 0; i < slots.length; i++) {
+        // generate HTML for each horizontal slot
+        let showSlotEndTime = this.showSlotEndTime
+        let showMinorSlotTime = this.showMinorSlotTime
+
+        slot = slots[i]
+        nextSlot = slots[i + 1]
+        startTime = start.clone().time(slot.start)
+        endTime = start.clone().time(slot.end)
+
+        if (nextSlot) {
+          nextStartTime = start.clone().time(nextSlot.start)
+
+          breakHeight = moment.duration(nextStartTime.diff(endTime)).asMinutes()
+          breakHtml = (breakHeight > 0) ? '<tr class="fc-timeslots-break" style="height:' + breakHeight + 'px;"><td class="fc-break-axis"></td><td class="fc-timeslots-break-content"></td></tr>' : ''
+        }
+
+        slotHeight = moment.duration(endTime.diff(startTime)).asMinutes()
+
+        let timeHtml = ''
+        if (showMinorSlotTime === true || !slot.minor) {
+          timeHtml = htmlEscape(startTime.format(this.labelFormat))
+          if (showSlotEndTime === true) {
+            timeHtml += htmlEscape('\n' + endTime.format(this.labelFormat))
+          }
+        }
+        axisHtml =
+          '<td class="fc-axis fc-time ' + view.widgetContentClass + '" ' + view.axisStyleAttr() + '>' +
+          '<div class="fc-timeslots-axis">' + timeHtml + '</div>' +
+          '</td>'
+
+        let slotClasses = []
+        if (slot.className) {
+          if (typeof slot.className === 'string') {
+            slotClasses.push(slot.className)
+          } else if (Array.isArray(slot.className) === true) {
+            for (let j = 0; j < slot.className.length; j++) {
+              let cl = slot.className[j]
+              if (typeof cl === 'string') {
+                slotClasses.push(cl)
+              }
+            }
+          }
+        }
+        if (slot.minor === true) {
+          slotClasses.push('fc-minor')
+        } else {
+          slotClasses.push('fc-major')
+        }
+        html +=
+          '<tr class="' + slotClasses.join(' ') + '" ' + 'style="height: ' + slotHeight + 'px">' +
+          (!isRTL ? axisHtml : '') +
+          '<td class="' + theme.getClass('widgetContent') + '"/>' +
+          (isRTL ? axisHtml : '') +
+          '</tr>' + breakHtml
+        breakHtml = ''
+      }
+    } else {
+      // Calculate the time for each slot
+      while (slotTime < dateProfile.maxTime) {
+        slotDate = calendar.msToUtcMoment(dateProfile.renderUnzonedRange.startMs).time(slotTime)
+        isLabeled = isInt(divideDurationByDuration(slotIterator, this.labelInterval))
+
+        axisHtml =
+          '<td class="fc-axis fc-time ' + theme.getClass('widgetContent') + '" ' + view.axisStyleAttr() + '>' +
           (isLabeled ?
-            '<span>' + // for matchCellWidths
+              '<span>' + // for matchCellWidths
               htmlEscape(slotDate.format(this.labelFormat)) +
-            '</span>' :
-            ''
-            ) +
-        '</td>'
+              '</span>' :
+              ''
+          ) +
+          '</td>'
 
-      html +=
-        '<tr data-time="' + slotDate.format('HH:mm:ss') + '"' +
+        html +=
+          '<tr data-time="' + slotDate.format('HH:mm:ss') + '"' +
           (isLabeled ? '' : ' class="fc-minor"') +
           '>' +
           (!isRTL ? axisHtml : '') +
           '<td class="' + theme.getClass('widgetContent') + '"/>' +
           (isRTL ? axisHtml : '') +
-        '</tr>'
+          '</tr>'
 
-      slotTime.add(this.slotDuration)
-      slotIterator.add(this.slotDuration)
+        slotTime.add(this.slotDuration)
+        slotIterator.add(this.slotDuration)
+      }
     }
 
     return html
@@ -489,8 +617,18 @@ export default class TimeGrid extends InteractiveDateComponent {
   }
 
 
-  // Computes the top coordinate, relative to the bounds of the grid, of the given time (a Duration).
+  // Computes the top coordinate, relative to the bounds of the grid, of the given time (a Duration),
   computeTimeTop(time) {
+    if (this.slots) {
+      return this.computeTimeTopWithSlots(time)
+    } else {
+      return this.computeTimeTopWithoutSlots(time)
+    }
+  }
+
+  // Computes the top coordinate, relative to the bounds of the grid, of the given time (a Duration)
+  // when there are no slots on the grid.
+  computeTimeTopWithoutSlots(time) {
     let len = this.slatEls.length
     let dateProfile = this.dateProfile
     let slatCoverage = (time - dateProfile.minTime) / this.slotDuration // floating-point value of # of slots covered
@@ -514,6 +652,71 @@ export default class TimeGrid extends InteractiveDateComponent {
 
     return this.slatCoordCache.getTopPosition(slatIndex) +
       this.slatCoordCache.getHeight(slatIndex) * slatRemainder
+  }
+
+
+  // Computes the top coordinate, relative to the bounds of the grid, of the given time (a Duration),
+  // when the grid is made of custom slots
+  computeTimeTopWithSlots(time) {
+    let slots = this.slots
+    let start = this.view.calendar.msToUtcMoment(this.dateProfile.renderUnzonedRange.startMs)
+    let time2 = start.clone().time(time) // Convert duration to time;
+    let slatIndex = null
+    let isInSlot = false
+    let isInBreakBefore = false
+
+    let startTime
+    let endTime
+    // look for a matching slot for 'time'
+    for (let i = 0; i < slots.length; i++) {
+      let slot = slots[i]
+
+      startTime = start.clone().time(slot.start)
+      if (i === 0 && time2.isBefore(startTime)) {
+        // 'time' too early for slots range: no need to go any further,
+        // displayed on first row
+        return this.slatCoordCache.getTopPosition(0)
+      }
+
+      isInBreakBefore = i > 0 && time2.isBefore(startTime)
+      if (isInBreakBefore) {
+        // found matching slot, 'time' is just before it
+        slatIndex = i
+        break
+      }
+
+      endTime = start.clone().time(slot.end)
+      isInSlot = time2.isSame(startTime) ||
+        time2.isBetween(startTime, endTime) ||
+        time2.isSame(endTime)
+      if (isInSlot) {
+        // found matching slot, 'time' is inside it
+        slatIndex = i
+        break
+      }
+    }
+
+    // not found: 'time' too late for slots range : displayed on last row
+    if (slatIndex === null) {
+      return this.slatCoordCache.getTopPosition(slots.length)
+    }
+
+    // compute position from row's top
+    let slatTop = this.slatCoordCache.getTopPosition(slatIndex) // the top position of the furthest whole slot;
+    startTime = start.clone().time(slots[slatIndex].start)
+    if (isInSlot) {
+      endTime = start.clone().time(slots[slatIndex].end)
+      let slotDuration = endTime.diff(startTime)
+      let slatRemainder = time2.diff(startTime) / slotDuration // fraction of slot spanned
+      let slatBottom = this.slatCoordCache.getBottomPosition(slatIndex)
+      return slatTop + (slatBottom - slatTop) * slatRemainder
+    } else { // (isInBreakBefore)
+      let previousEndTime = start.clone().time(slots[slatIndex - 1].end)
+      let breakDuration = startTime.diff(previousEndTime)
+      let breakRemainder = startTime.diff(time2) / breakDuration // fraction of break spanned
+      let previousSlatBottom = this.slatCoordCache.getBottomPosition(slatIndex - 1)
+      return slatTop - (slatTop - previousSlatBottom) * breakRemainder
+    }
   }
 
 
@@ -591,15 +794,25 @@ export default class TimeGrid extends InteractiveDateComponent {
     if (colCoordCache.isLeftInBounds(leftOffset) && slatCoordCache.isTopInBounds(topOffset)) {
       let colIndex = colCoordCache.getHorizontalIndex(leftOffset)
       let slatIndex = slatCoordCache.getVerticalIndex(topOffset)
+      let snapIndex
+      let snapTop
+      let snapBottom
 
       if (colIndex != null && slatIndex != null) {
-        let slatTop = slatCoordCache.getTopOffset(slatIndex)
-        let slatHeight = slatCoordCache.getHeight(slatIndex)
-        let partial = (topOffset - slatTop) / slatHeight // floating point number between 0 and 1
-        let localSnapIndex = Math.floor(partial * snapsPerSlot) // the snap # relative to start of slat
-        let snapIndex = slatIndex * snapsPerSlot + localSnapIndex
-        let snapTop = slatTop + (localSnapIndex / snapsPerSlot) * slatHeight
-        let snapBottom = slatTop + ((localSnapIndex + 1) / snapsPerSlot) * slatHeight
+        if (this.slots) {
+          let originTop = this.el.offset().top
+          snapIndex = this.snapOnSlots ? slatIndex : Math.round((topOffset - originTop) / this.snapDuration.asMinutes())
+          snapTop = slatCoordCache.getTopOffset(slatIndex)
+          snapBottom = slatCoordCache.getBottomOffset(slatIndex)
+        } else {
+          let slatTop = slatCoordCache.getTopOffset(slatIndex)
+          let slatHeight = slatCoordCache.getHeight(slatIndex)
+          let partial = (topOffset - slatTop) / slatHeight // floating point number between 0 and 1
+          let localSnapIndex = Math.floor(partial * snapsPerSlot) // the snap # relative to start of slat
+          snapIndex = slatIndex * snapsPerSlot + localSnapIndex
+          snapTop = slatTop + (localSnapIndex / snapsPerSlot) * slatHeight
+          snapBottom = slatTop + ((localSnapIndex + 1) / snapsPerSlot) * slatHeight
+        }
 
         return {
           col: colIndex,
@@ -620,8 +833,14 @@ export default class TimeGrid extends InteractiveDateComponent {
     let time = this.computeSnapTime(hit.snap) // pass in the snap-index
     let end
 
+    let slots = this.slots
+
     start.time(time)
-    end = start.clone().add(this.snapDuration)
+    if (slots && this.snapOnSlots) {
+      end = start.clone().time(slots[hit.snap].end)
+    } else {
+      end = start.clone().add(this.snapDuration)
+    }
 
     return new ComponentFootprint(
       new UnzonedRange(start, end),
@@ -632,7 +851,15 @@ export default class TimeGrid extends InteractiveDateComponent {
 
   // Given a row number of the grid, representing a "snap", returns a time (Duration) from its start-of-day
   computeSnapTime(snapIndex) {
-    return moment.duration(this.dateProfile.minTime + this.snapDuration * snapIndex)
+    let slots = this.slots
+    if (slots && this.snapOnSlots) {
+      let start = this.view.calendar.msToUtcMoment(this.dateProfile.renderUnzonedRange.startMs)
+      let beginTime = start.clone()
+      let rowTime = start.clone().time(slots[Math.min(snapIndex, slots.length - 1)].start)
+      return moment.duration(rowTime.diff(beginTime))
+    } else {
+      return moment.duration(this.dateProfile.minTime + this.snapDuration * snapIndex)
+    }
   }
 
 

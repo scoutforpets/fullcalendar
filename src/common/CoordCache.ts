@@ -133,7 +133,7 @@ export default class CoordCache {
 
 
   // Given a top offset (from document top), returns the index of the el that it vertically intersects.
-  // If no intersection is made, returns undefined.
+  // If no intersection is made, it returns the closest one.
   getVerticalIndex(topOffset) {
     this.ensureBuilt()
 
@@ -143,6 +143,10 @@ export default class CoordCache {
     let i
 
     for (i = 0; i < len; i++) {
+      if (topOffset >= bottoms[i - 1] && topOffset < tops[i]) {
+        return i
+      }
+
       if (topOffset >= tops[i] && topOffset < bottoms[i]) {
         return i
       }
