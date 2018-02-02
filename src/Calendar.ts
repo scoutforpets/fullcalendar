@@ -1146,12 +1146,13 @@ export default class Calendar {
     return end
   }
 
-  // Snaps the event in the slot boundary
-  snapEventInSlotBoundary(startDate, endDate, slots) {
-    // look for the slot containing date
+  // If the border of a dragged or resized event falls in the middle of a slot, its
+  // duration is extended to fill the entire slot.
+  computeSnapPolicyEnlarge(startDate, endDate, slots) {
     let startFound = false
     let endFound = endDate == null
 
+    // look for the slot containing date
     for (let i = 0; i < slots.length; i++) {
       let slot = slots[i]
       let startTime = startDate.clone().time(slot.start)
@@ -1168,13 +1169,12 @@ export default class Calendar {
         endTime = endDate.clone().time(slot.end)
         if (endDate.isBefore(startTime) || endDate.isSame(startTime)) {
           // end of event is before the current slot
-          endFound = true
           endDate.time(slots[Math.max(0, i - 1)].end)
-        }
-        if (endDate.isBetween(startTime, endTime) || endDate.isSame(endTime)) {
-          // found matching slot for end of event
           endFound = true
+        } else if (endDate.isBetween(startTime, endTime) || endDate.isSame(endTime)) {
+          // found matching slot for end of event
           endDate = endTime
+          endFound = true
         }
       }
 
@@ -1190,6 +1190,42 @@ export default class Calendar {
     }
     if (!endFound) {
       endDate.time(lastSlot.end)
+    }
+
+    return {
+      start: startDate,
+      end: endDate
+    }
+  }
+
+  // Find the closest slot for a specific date
+  findClosestSlot(slots, date, isStart = true) {
+    let curr = slots[0]
+    let diff = Math.abs(date.diff(date.clone().time(isStart ? curr.start : curr.end), 'seconds'))
+    for (let i = 0; i < slots.length; i++) {
+      let newDiff = Math.abs(date.diff(date.clone().time(isStart ? slots[i].start : slots[i].end), 'seconds'))
+      if (newDiff < diff) {
+        diff = newDiff
+        curr = slots[i]
+      }
+    }
+
+    return curr
+  }
+
+  // If the border of a dragged or resized event falls in the middle of a slot, its
+  // moved to the closest timestamp marking the border of a slot.
+  computeSnapPolicyClosest(startDate, endDate, slots) {
+    let closestStartSlot = this.findClosestSlot(slots, startDate)
+    startDate = startDate.clone().time(closestStartSlot.start)
+
+    if (endDate != null) {
+      let closestEndSlot = this.findClosestSlot(slots, endDate, false)
+      endDate = endDate.clone().time(closestEndSlot.end)
+
+      if (endDate.isBefore(startDate)) {
+        endDate = endDate.clone().time(closestStartSlot.end)
+      }
     }
 
     return {

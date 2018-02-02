@@ -118,7 +118,13 @@ export default class EventDefDateMutation {
     let slots = calendar.opt('slots')
     let snapOnSlots = calendar.opt('snapOnSlots')
     if (!eventDateProfile.isAllDay() && !this.forceAllDay && slots && snapOnSlots) {
-      let dateRange = calendar.snapEventInSlotBoundary(start, end, slots)
+      let dateRange
+      if (snapOnSlots.snapPolicy === 'closest') {
+        dateRange = calendar.computeSnapPolicyClosest(start, end, slots)
+      } else { // snapOnSlots.snapPolicy === "enlarge"
+        dateRange = calendar.computeSnapPolicyEnlarge(start, end, slots)
+      }
+
       // snap event boundary to slot boundary
       start = dateRange.start
       end = dateRange.end
