@@ -5294,7 +5294,13 @@ var EventDefDateMutation = /** @class */ (function () {
         var slots = calendar.opt('slots');
         var snapOnSlots = calendar.opt('snapOnSlots');
         if (!eventDateProfile.isAllDay() && !this.forceAllDay && slots && snapOnSlots) {
-            var dateRange = calendar.snapEventInSlotBoundary(start, end, slots);
+            var dateRange = void 0;
+            if (snapOnSlots.snapPolicy === 'closest') {
+                dateRange = calendar.computeSnapPolicyClosest(start, end, slots);
+            }
+            else {
+                dateRange = calendar.computeSnapPolicyEnlarge(start, end, slots);
+            }
             // snap event boundary to slot boundary
             start = dateRange.start;
             end = dateRange.end;
@@ -10111,11 +10117,12 @@ var Calendar = /** @class */ (function () {
         }
         return end;
     };
-    // Snaps the event in the slot boundary
-    Calendar.prototype.snapEventInSlotBoundary = function (startDate, endDate, slots) {
-        // look for the slot containing date
+    // If the border of a dragged or resized event falls in the middle of a slot, its
+    // duration is extended to fill the entire slot.
+    Calendar.prototype.computeSnapPolicyEnlarge = function (startDate, endDate, slots) {
         var startFound = false;
         var endFound = endDate == null;
+        // look for the slot containing date
         for (var i = 0; i < slots.length; i++) {
             var slot = slots[i];
             var startTime = startDate.clone().time(slot.start);
@@ -10130,13 +10137,13 @@ var Calendar = /** @class */ (function () {
                 endTime = endDate.clone().time(slot.end);
                 if (endDate.isBefore(startTime) || endDate.isSame(startTime)) {
                     // end of event is before the current slot
-                    endFound = true;
                     endDate.time(slots[Math.max(0, i - 1)].end);
-                }
-                if (endDate.isBetween(startTime, endTime) || endDate.isSame(endTime)) {
-                    // found matching slot for end of event
                     endFound = true;
+                }
+                else if (endDate.isBetween(startTime, endTime) || endDate.isSame(endTime)) {
+                    // found matching slot for end of event
                     endDate = endTime;
+                    endFound = true;
                 }
             }
             if (startFound && endFound) {
@@ -10150,6 +10157,37 @@ var Calendar = /** @class */ (function () {
         }
         if (!endFound) {
             endDate.time(lastSlot.end);
+        }
+        return {
+            start: startDate,
+            end: endDate
+        };
+    };
+    // Find the closest slot for a specific date
+    Calendar.prototype.findClosestSlot = function (slots, date, isStart) {
+        if (isStart === void 0) { isStart = true; }
+        var curr = slots[0];
+        var diff = Math.abs(date.diff(date.clone().time(isStart ? curr.start : curr.end), 'seconds'));
+        for (var i = 0; i < slots.length; i++) {
+            var newDiff = Math.abs(date.diff(date.clone().time(isStart ? slots[i].start : slots[i].end), 'seconds'));
+            if (newDiff < diff) {
+                diff = newDiff;
+                curr = slots[i];
+            }
+        }
+        return curr;
+    };
+    // If the border of a dragged or resized event falls in the middle of a slot, its
+    // moved to the closest timestamp marking the border of a slot.
+    Calendar.prototype.computeSnapPolicyClosest = function (startDate, endDate, slots) {
+        var closestStartSlot = this.findClosestSlot(slots, startDate);
+        startDate = startDate.clone().time(closestStartSlot.start);
+        if (endDate != null) {
+            var closestEndSlot = this.findClosestSlot(slots, endDate, false);
+            endDate = endDate.clone().time(closestEndSlot.end);
+            if (endDate.isBefore(startDate)) {
+                endDate = endDate.clone().time(closestStartSlot.end);
+            }
         }
         return {
             start: startDate,
@@ -11866,7 +11904,16 @@ var TimeGrid = /** @class */ (function (_super) {
                 if (showMinorSlotTime !== false) {
                     this.showMinorSlotTime = true;
                 }
-                this.snapOnSlots = this.opt('snapOnSlots');
+                var snapOnSlots = this.opt('snapOnSlots');
+                if (snapOnSlots && (snapOnSlots === true || // defaults to false
+                    snapOnSlots.hasOwnProperty('snapPolicy'))) {
+                    this.snapOnSlots = {
+                        snapPolicy: 'enlarge' // could also be 'closest'
+                    };
+                    if (snapOnSlots.snapPolicy === 'closest') {
+                        this.snapOnSlots.snapPolicy = 'closest';
+                    }
+                }
             }
         }
         input = this.opt('slotLabelInterval');

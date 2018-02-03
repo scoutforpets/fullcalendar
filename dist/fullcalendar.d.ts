@@ -1021,7 +1021,12 @@ declare module 'fullcalendar/Calendar' {
 	    requestEvents(start: moment.Moment, end: moment.Moment): any;
 	    getEventEnd(event: any): moment.Moment;
 	    getDefaultEventEnd(allDay: boolean, zonedStart: moment.Moment): moment.Moment;
-	    snapEventInSlotBoundary(startDate: any, endDate: any, slots: any): {
+	    computeSnapPolicyEnlarge(startDate: any, endDate: any, slots: any): {
+	        start: any;
+	        end: any;
+	    };
+	    findClosestSlot(slots: any, date: any, isStart?: boolean): any;
+	    computeSnapPolicyClosest(startDate: any, endDate: any, slots: any): {
 	        start: any;
 	        end: any;
 	    };
