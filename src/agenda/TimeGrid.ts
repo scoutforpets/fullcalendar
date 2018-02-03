@@ -204,7 +204,17 @@ export default class TimeGrid extends InteractiveDateComponent {
         if (showMinorSlotTime !== false) { // defaults to true
           this.showMinorSlotTime = true
         }
-        this.snapOnSlots = this.opt('snapOnSlots')
+        let snapOnSlots = this.opt('snapOnSlots')
+        if (snapOnSlots && (snapOnSlots === true || // defaults to false
+            snapOnSlots.hasOwnProperty('snapPolicy')
+          )) {
+          this.snapOnSlots = {
+            snapPolicy: 'enlarge' // could also be 'closest'
+          }
+          if (snapOnSlots.snapPolicy === 'closest') {
+            this.snapOnSlots.snapPolicy = 'closest'
+          }
+        }
       }
     }
 
